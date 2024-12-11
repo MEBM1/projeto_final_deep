@@ -1,5 +1,10 @@
 from utils.predictor import *
 
+#import sys
+#sys.path.append(r'C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Final\looking-main\utils')
+#from utils.predictor import *
+#from predictor import *
+
 parser = argparse.ArgumentParser(prog='python3 predict', usage='%(prog)s [options] images', description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--version', action='version',version='Looking Model {version}'.format(version=0.1))
 parser.add_argument('--images', nargs='*',help='input images')
@@ -30,4 +35,5 @@ visualizer.cli(parser)
 args = parser.parse_args()
 
 predictor = Predictor(args)
-predictor.predict(args)
+#predictor.predict(args)
+#predictor.generate_img_w_keypoints(args)

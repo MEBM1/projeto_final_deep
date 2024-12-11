@@ -10,6 +10,13 @@ import errno
 from glob import glob
 from PIL import Image, ImageFile
 import numpy as np
+import torchvision.transforms as transforms
+import random
+import sys
+sys.path.insert(0,r'C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Final\looking-main\utils')
+#from predictor import Predictor
+
+#predictor = Predictor()
 
 np.random.seed(0)
 
@@ -184,6 +191,23 @@ def file_to_dict(file):
 		data["iou"].append(float(line_s[-3]))
 	return data
 
+def file_to_dict_with_ann(file):
+	data = {"path": [], "names": [], "bb": [], "im": [], "label": [], "video": [], "iou": [], "age":[], "gender":[]}
+	for line in file:
+		line = line[:-1]
+		line_s = line.split(",")
+		video = line_s[0].split("/")[0] 
+		data['path'].append(line_s[0])
+		data['names'].append(line_s[1])
+		data["bb"].append([float(line_s[2]), float(line_s[3]), float(line_s[4]), float(line_s[5])])
+		data["im"].append(line_s[-4])         # Assume que "im" é o 4º valor antes do final
+		data["label"].append(int(line_s[-3])) # Assume que "label" é o 3º valor antes do final
+		data["video"].append(video)
+		data["iou"].append(float(line_s[-5]))  # Assume que "iou" é o 6º valor antes do final
+		data["age"].append(int(line_s[-2]))   # Assume que "age" é o penúltimo valor
+		data["gender"].append(int(line_s[-1])) # Assume que "gender" é o último valor
+    
+	return data
 
 ####
 
@@ -218,10 +242,64 @@ class JAAD_loader():
 						data["video"].append(videos)
 		return data
 	
+	def augment_selected_samples(self,data_dict, percentage=0.3):
+		# Define as transformações (zoom-in e ajuste de brilho)
+		print(f"Tipo de data_dict: {type(data_dict)}")  # Deve ser <class 'dict'>
+		print(f"Chaves de data_dict: {data_dict.keys()}")  # Esperado: ['path', 'bbox', 'names', 'Y', 'video', 'attributes', 'image']
+    
+		augmentation_transforms = transforms.Compose([
+			transforms.RandomResizedCrop(size=(224, 224), scale=(0.8, 1.0)),  # Zoom-in
+			transforms.ColorJitter(brightness=0.5)  # Ajuste de brilho
+		])
+		print(f"Tipo de data_dict: {type(data_dict)}")  # Deve ser <class 'dict'>
+		print(f"Chaves de data_dict: {data_dict.keys()}")  # Esperado: ['path', 'bbox', 'names', 'Y', 'video', 'attributes', 'image']
+    
+		# Calcula quantas amostras serão augmentadas
+		num_samples_to_augment = int(len(data_dict['path']) * percentage)
+		indices_to_augment = random.sample(range(len(data_dict['path'])), num_samples_to_augment)
+		
+		# Cria listas para armazenar os dados augmentados
+		new_paths = []
+		new_bboxes = []
+		new_names = []
+		new_Y = []
+		new_videos = []
+		new_attributes = []
+		
+		# Aplica as transformações somente nas amostras selecionadas
+		for i in indices_to_augment:
+			original_image_path = data_dict['path'][i]  # Caminho da imagem
+			
+			# Carrega a imagem e aplica a transformação
+			with Image.open(original_image_path) as img:
+				augmented_image = augmentation_transforms(img)  # Aplica a transformação
+			
+			# Salva a imagem aumentada no disco, se necessário
+			augmented_image_path = original_image_path.replace('.png', '_augmented.png')  # Exemplo de novo nome para a imagem aumentada
+			augmented_image.save(augmented_image_path)
+
+			# Adiciona o novo caminho e dados ao dicionário
+			new_paths.append(augmented_image_path)  # Caminho da imagem aumentada
+			new_bboxes.append(data_dict['bbox'][i])
+			new_names.append(data_dict['names'][i])
+			new_Y.append(data_dict['Y'][i])
+			new_videos.append(data_dict['video'][i])
+			new_attributes.append(data_dict['attributes'][i])
+		
+		# Adiciona as novas imagens e informações ao dicionário original
+		data_dict['path'].extend(new_paths)
+		data_dict['bbox'].extend(new_bboxes)
+		data_dict['names'].extend(new_names)
+		data_dict['Y'].extend(new_Y)
+		data_dict['video'].extend(new_videos)
+		data_dict['attributes'].extend(new_attributes)
+		
+		return data_dict
+
 	
-	def generate_with_attributes_ann(self):
+	def generate_with_attributes_ann(self, base_image_path):
 		"""
-		Generate the annotations in a dictionary
+		Generate the annotations in a dictionary with image paths only.
 		"""
 		data = {
 			"path": [], 
@@ -229,7 +307,8 @@ class JAAD_loader():
 			"names": [], 
 			"Y": [], 
 			"video": [], 
-			"attributes": []  # Adicionando campo para os atributos
+			"attributes": [],  # Adicionando campo para os atributos
+			"json_path": [] ## Não será mais necessário
 		}
 		
 		for videos in self.data.keys():
@@ -237,8 +316,9 @@ class JAAD_loader():
 			for d in ped_anno:
 				if 'look' in ped_anno[d]['behavior'].keys():
 					for i in range(len(ped_anno[d]['frames'])):
-						# Adicionando caminho da imagem
-						path = os.path.join(videos, str(ped_anno[d]['frames'][i]).zfill(5) + '.png')
+						relative_path = os.path.join(videos, f"{ped_anno[d]['frames'][i]:05}.png")
+						path = os.path.join(base_image_path, relative_path)
+						
 						bbox = [
 							ped_anno[d]['bbox'][i][0], 
 							ped_anno[d]['bbox'][i][1], 
@@ -256,8 +336,8 @@ class JAAD_loader():
 						data['names'].append(d)
 						data["video"].append(videos)
 						data["attributes"].append(attributes)  # Adicionando os atributos
-
 		return data
+
 
 	def generate_ap_gt_test(self):
 		di_gt = {}
@@ -363,6 +443,170 @@ class JAAD_creator():
 					file_out.write(line)
 		file_out.close()
 
+	def get_last_x_characters(self, full_path, num_chars):
+
+		if len(full_path) >= num_chars:
+			return full_path[-num_chars:]
+		else:
+			return full_path  # Se o número de caracteres excede o tamanho da string, retorna a string completa.
+
+# Função teste
+	def create_with_ann_augmented(self, dict_annotation, predictor):
+		"""
+		Modificado para processar imagens com 'augmented' de forma personalizada.
+		"""
+		file_out = open(os.path.join(self.txt_out, "ground_truth_teste.txt"), "w+")
+		#name_pic = 0
+		for i in tqdm(range(len(dict_annotation["Y"]))):
+			path = dict_annotation["path"][i]
+			#path = path.replace('_augmented.png', '.png')  # Ajusta o nome se necessário
+
+			# Se o nome da imagem contiver 'augmented', chama a nova função
+			if 'augmented' in path:
+				new_path = self.get_last_x_characters(path, 30)
+				augmented_json = None
+				augmented_json = predictor.process_augmented_image(
+					os.path.join(self.path_jaad, new_path),
+					transparency=0.5,  # Ajuste os argumentos conforme necessário
+					eyecontact_thresh=0.3
+				)
+				#continue  # Pula para a próxima iteração
+			else:
+				new_path = self.get_last_x_characters(path, 20)
+			try:
+				if 'augmented' not in path:
+					data_json = json.load(open(os.path.join(self.path_joints, new_path + '.predictions.json'), 'r'))
+				else:
+					data_json = augmented_json
+			except FileNotFoundError:
+				print(f"Arquivo JSON não encontrado para {new_path}, continuando...")
+				continue
+
+			#data_json = json.load(open(os.path.join(self.path_joints, new_path + '.predictions.json'), 'r'))
+			if len(data_json) > 0:
+				iou_max = 0
+				j = None
+				bb_gt = dict_annotation["bbox"][i]
+				sc = 0
+				for k in range(len(data_json)):
+					di = data_json[k]
+					bb = convert_bb(enlarge_bbox(di["bbox"]))
+					iou = bb_intersection_over_union(bb, bb_gt)
+					if iou > iou_max:
+						iou_max = iou
+						j = k
+						bb_final = bb
+						sc = di["score"]
+				
+				if iou_max >= 0.3:
+					print('entrei iou max')
+					kps = convert_kps(data_json[j]["keypoints"])
+					name_head = str(name_pic).zfill(10) + '.png'
+					name_eyes = str(name_pic).zfill(10) + '_eyes.png'
+
+					#img = Image.open(os.path.join(self.path_jaad, path)).convert('RGB')
+					img = Image.open(os.path.join(self.path_jaad, new_path)).convert('RGB')
+					img = np.asarray(img)
+					head = crop_jaad(img, bb_final)
+					eyes = crop_eyes(img, kps)
+					
+					Image.fromarray(head).convert('RGB').save(os.path.join(self.dir_out, name_head))
+					Image.fromarray(eyes).convert('RGB').save(os.path.join(self.dir_out, name_eyes))
+					kps_out = {"X": kps}
+					
+					json.dump(kps_out, open(os.path.join(self.dir_out, name_head + '.json'), "w"))
+					
+					# Extrair os atributos do pedestre atual
+					attributes = dict_annotation["attributes"][i]
+					age = attributes.get("age", "N/A")
+					gender = attributes.get("gender", "N/A")
+					
+					# Modificar a linha para incluir os atributos
+					line = (
+						f"{new_path},{dict_annotation['names'][i]},{bb_final[0]},{bb_final[1]},{bb_final[2]},{bb_final[3]},"
+						f"{sc},{iou_max},{name_head},{dict_annotation['Y'][i]},{age},{gender}\n"
+					)
+					print('line', line)
+
+					#line = (
+					#	f"{path},{dict_annotation['names'][i]},{bb_final[0]},{bb_final[1]},{bb_final[2]},{bb_final[3]},"
+					#	f"{sc},{iou_max},{name_head},{dict_annotation['Y'][i]},{age},{gender}\n"
+					#)
+					
+					name_pic += 1
+					file_out.write(line)
+		file_out.close()
+
+	def create_with_ann(self, dict_annotation):
+		"""
+			Create the files given the dictionary with the annotations 
+		"""
+		file_out = open(os.path.join(self.txt_out, "ground_truth_teste.txt"), "w+")
+		name_pic = 0
+		for i in tqdm(range(len(dict_annotation["Y"]))):
+			path = dict_annotation["path"][i]
+
+			#print('PATH', path)
+
+			#print(self.get_last_x_characters(path, 23))
+			path.replace('_augmented.png', '.png')
+			new_path = self.get_last_x_characters(path, 20)
+			#data_json = json.load(open(os.path.join(self.path_joints, path + '.predictions.json'), 'r'))
+			full_path = os.path.join(self.path_joints, new_path + '.predictions.json')
+
+			try:
+				data_json = json.load(open(full_path, 'r'))
+			except Exception as e:
+				print(f"Erro ao carregar JSON do arquivo {full_path}: {e}. Pulando para a próxima iteração.")
+				continue  # Salta para a próxima iteração do loop
+
+			#data_json = json.load(open(os.path.join(self.path_joints, new_path + '.predictions.json'), 'r'))
+			if len(data_json) > 0:
+				iou_max = 0
+				j = None
+				bb_gt = dict_annotation["bbox"][i]
+				sc = 0
+				for k in range(len(data_json)):
+					di = data_json[k]
+					bb = convert_bb(enlarge_bbox(di["bbox"]))
+					iou = bb_intersection_over_union(bb, bb_gt)
+					if iou > iou_max:
+						iou_max = iou
+						j = k
+						bb_final = bb
+						sc = di["score"]
+				
+				if iou_max >= 0.3:
+					kps = convert_kps(data_json[j]["keypoints"])
+					name_head = str(name_pic).zfill(10) + '.png'
+					name_eyes = str(name_pic).zfill(10) + '_eyes.png'
+
+					img = Image.open(os.path.join(self.path_jaad, path)).convert('RGB')
+					img = np.asarray(img)
+					head = crop_jaad(img, bb_final)
+					eyes = crop_eyes(img, kps)
+					
+					Image.fromarray(head).convert('RGB').save(os.path.join(self.dir_out, name_head))
+					Image.fromarray(eyes).convert('RGB').save(os.path.join(self.dir_out, name_eyes))
+					kps_out = {"X": kps}
+					
+					json.dump(kps_out, open(os.path.join(self.dir_out, name_head + '.json'), "w"))
+					
+					# Extrair os atributos do pedestre atual
+					attributes = dict_annotation["attributes"][i]
+					age = attributes.get("age", "N/A")
+					gender = attributes.get("gender", "N/A")
+					
+					# Modificar a linha para incluir os atributos
+					line = (
+						f"{path},{dict_annotation['names'][i]},{bb_final[0]},{bb_final[1]},{bb_final[2]},{bb_final[3]},"
+						f"{sc},{iou_max},{name_head},{dict_annotation['Y'][i]},{age},{gender}\n"
+					)
+					
+					name_pic += 1
+					file_out.write(line)
+		file_out.close()
+
 class JAAD_splitter():
 	"""
 		Class definition to create JAAD splits
@@ -380,7 +624,8 @@ class JAAD_splitter():
 		file_val.close()
 		file_test.close()
 
-		self.data = file_to_dict(self.file_gt)
+		#self.data = file_to_dict(self.file_gt)
+		self.data = file_to_dict_with_ann(self.file_gt)
 
 	def split_(self, data, split='scenes'):
 		file_train = open(os.path.join(self.folder_txt, "jaad_train_{}.txt".format(split)), "w")
@@ -443,6 +688,100 @@ class JAAD_splitter():
 		file_val.close()
 		file_test.close()
 
+
+	def split_with_ann_(self, data, split='scenes'):
+		file_train = open(os.path.join(self.folder_txt, "jaad_train_{}.txt".format(split)), "w")
+		file_val = open(os.path.join(self.folder_txt, "jaad_val_{}.txt".format(split)), "w")
+		file_test = open(os.path.join(self.folder_txt, "jaad_test_{}.txt".format(split)), "w")
+
+		if split == 'scenes':
+			for i in range(len(data["label"])):
+				line = ','.join(
+					[
+                    data["path"][i], data["names"][i], 
+                    str(data["bb"][i][0]), str(data["bb"][i][1]), 
+                    str(data["bb"][i][2]), str(data["bb"][i][3]), 
+                    data["im"][i], str(data['label'][i]),
+                    str(data['age'][i]), str(data['gender'][i])  # Adicionando age e gender
+                ])
+				#print('data video')
+				    # Armazenar informações extras para análise (opcional)
+
+				#print(data['video'][i][:10])
+				if data["video"][i][:10] in self.train_videos:
+					file_train.write(line + '\n')
+				elif data["video"][i][:10] in self.test_videos and data['iou'][i] >= 0.5:
+					file_test.write(line + '\n')
+				elif data["video"][i][:10] in self.val_videos:
+					file_val.write(line + '\n')
+		else:
+			Y = np.array(data["label"])
+			idx_pos = np.where(Y == 1)[0]
+			N_pos = len(idx_pos)
+			idx_neg = np.where(Y==0)[0]
+			np.random.shuffle(idx_neg)
+			idx_neg = idx_neg[:N_pos]
+			idx = np.concatenate((idx_neg, idx_pos))
+
+
+			data['path'] = np.array(data["path"])[idx]
+			data['names'] = np.array(data["names"])[idx]
+			data['bb'] = np.array(data["bb"])[idx, :]
+			data['im'] = np.array(data["im"])[idx]
+			data['label'] = np.array(data["label"])[idx]
+			data["video"] = np.array(data["video"])[idx]
+			data["iou"] = np.array(data["iou"])[idx]
+			data["gender"] = np.array(data["gender"])[idx]
+			data["age"] = np.array(data["age"])[idx]
+        	
+
+			#print(len(data["label"]))
+
+			idx_or = np.array(range(len(data['label'])))
+			N = len(idx_or)
+			np.random.shuffle(idx_or)
+
+			for j in range(int(0.6*N)):
+				i = idx_or[j]
+				line = ','.join(
+                [
+                    data["path"][i], data["names"][i],
+                    str(data["bb"][i][0]), str(data["bb"][i][1]),
+                    str(data["bb"][i][2]), str(data["bb"][i][3]),
+                    data["im"][i], str(data['label'][i]),
+                    str(data['age'][i]), str(data['gender'][i])  # Adicionando age e gender
+                ]
+            )
+				file_train.write(line+'\n')
+			for j in range(int(0.6*N), int(0.7*N)):
+				i = idx_or[j]
+				line = ','.join(
+                [
+                    data["path"][i], data["names"][i],
+                    str(data["bb"][i][0]), str(data["bb"][i][1]),
+                    str(data["bb"][i][2]), str(data["bb"][i][3]),
+                    data["im"][i], str(data['label'][i]),
+                    str(data['age'][i]), str(data['gender'][i])  # Adicionando age e gender
+                ]
+            )
+				file_val.write(line+'\n')
+			for j in range(int(0.7*N), N):
+				i = idx_or[j]
+				line = ','.join(
+                [
+                    data["path"][i], data["names"][i],
+                    str(data["bb"][i][0]), str(data["bb"][i][1]),
+                    str(data["bb"][i][2]), str(data["bb"][i][3]),
+                    data["im"][i], str(data['label'][i]),
+                    str(data['age'][i]), str(data['gender'][i])  # Adicionando age e gender
+                ]
+            )
+				if data['iou'][i] >= 0.5:
+					file_test.write(line+'\n')
+		
+		file_train.close()
+		file_val.close()
+		file_test.close()
 class Kitti_creator():
 	"""
 		Wrapper class for Kitti dataset creation 

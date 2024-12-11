@@ -11,9 +11,13 @@ from tqdm import tqdm
 import openpifpaf.datasets as datasets
 import time
 
-from utils.dataset import *
-from utils.network import *
-from utils.utils_predict import *
+#from utils.dataset import *
+#from utils.network import *
+#from utils.utils_predict import *
+
+from dataset import *
+from network import *
+from utils_predict import *
 
 from PIL import Image, ImageFile
 
@@ -184,6 +188,38 @@ class Predictor():
             out_labels = []
         return out_labels
     
+    def render_image_keypoints(self, image, bbox, keypoints, pred_labels, image_name, transparency, eyecontact_thresh):
+        # Convertendo a imagem PIL para OpenCV
+        open_cv_image = np.array(image)
+        open_cv_image = open_cv_image[:, :, ::-1].copy()  # Convertendo de RGB para BGR
+
+        # Escala para o tamanho da fonte (se necessário)
+        scale = 0.007
+        imageWidth, imageHeight, _ = open_cv_image.shape
+        font_scale = min(imageWidth, imageHeight) / (10 / scale)
+
+        # Criando uma máscara para desenhar os keypoints
+        mask = np.zeros(open_cv_image.shape, dtype=np.uint8)
+
+        # Desenhando os keypoints sem considerar o eyecontact_thresh
+        for i, _ in enumerate(pred_labels):  # Ignoramos pred_labels para não verificar o olhar
+            if i < len(keypoints):  # Garantir que o índice existe
+                if keypoints[i]:  # Verificar se keypoints[i] não está vazio ou inválido
+                    print(f"Keypoints {i}: {keypoints[i]}")  # Depuração para garantir que os keypoints estão corretos
+                    # Assumimos uma cor padrão (por exemplo, verde) para os keypoints
+                    color = (0, 255, 0)  # Verde
+                    mask = draw_skeleton(mask, keypoints[i], color)  # Desenhando os keypoints na máscara
+
+        # Aplica erodimento e desfocagem na máscara
+        mask = cv2.erode(mask, (7, 7), iterations=1)
+        mask = cv2.GaussianBlur(mask, (3, 3), 0)
+
+        # Adiciona a máscara à imagem original com a transparência especificada
+        open_cv_image = cv2.addWeighted(open_cv_image, 1, mask, transparency, 1.0)
+
+        # Salva a imagem final com os keypoints desenhados
+        cv2.imwrite(os.path.join(self.path_out, image_name[:-4] + '.predictions.png'), open_cv_image)
+
     def render_image(self, image, bbox, keypoints, pred_labels, image_name, transparency, eyecontact_thresh):
         open_cv_image = np.array(image) 
         open_cv_image = open_cv_image[:, :, ::-1].copy()
@@ -245,6 +281,118 @@ class Predictor():
                 start_pifpaf = time.time()
             else:
                 self.render_image(pifpaf_outs['image'], boxes, keypoints, pred_labels, im_name, transparency, eyecontact_thresh)
+
+            #if i > 20:
+            #    break
+        
+        if self.track_time and len(self.pifpaf_time) != 0 and len(self.inference_time) != 0:
+            print('Av. pifpaf time : {} ms. ± {} ms'.format(np.mean(self.pifpaf_time)*1000, np.std(self.pifpaf_time)*1000))
+            print('Av. inference time : {} ms. ± {} ms'.format(np.mean(self.inference_time)*1000, np.std(self.inference_time)*1000))
+            print('Av. total time : {} ms. ± {} ms'.format(np.mean(self.total_time)*1000, np.std(self.total_time)*1000))
+    
+#funçao teste
+    def process_augmented_image(self, image_path, transparency, eyecontact_thresh):
+        """
+        Processa uma única imagem que contém 'augmented' no nome e gera os keypoints e outros dados.
+        
+        Args:
+            image_path (str): Caminho da imagem a ser processada.
+            transparency (float): Transparência para renderização.
+            eyecontact_thresh (float): Threshold para contato visual.
+        """
+        if 'augmented' not in image_path:
+            return  # Ignora se o nome não contém 'augmented'
+
+        try:
+            # Carregar imagem
+            cpu_image = PIL.Image.open(image_path).convert('RGB')
+            im_name = os.path.basename(image_path)
+            im_size = (cpu_image.size[0], cpu_image.size[1])
+            
+            # Chamar o OpenPifPaf para predições
+            loader = self.predictor_.images([image_path])
+            for pred_batch, _, meta_batch in loader:
+                pifpaf_outs = {
+                    'json_data': [ann.json_data() for ann in pred_batch],
+                    'image': cpu_image
+                }
+                boxes, keypoints = preprocess_pifpaf(pifpaf_outs['json_data'], im_size, enlarge_boxes=False)
+                pred_labels = self.predict_look(boxes, keypoints, im_size)
+
+                # Gerar o JSON com as predições
+                predictions = []
+
+                for i in range(len(keypoints)):
+                    keypoint = keypoints[i]
+                    bbox = boxes[i]
+                    score = pred_labels[i]  # Usando as labels preditas (presumo que elas já sejam uma pontuação de confiança)
+
+                    # Criando um dicionário para cada predição
+                    prediction = {
+                        'keypoints': keypoint,  # Keypoints (x, y, visibilidade)
+                        'bbox': bbox,           # Caixa delimitadora [xmin, ymin, largura, altura]
+                        'score': score          # Pontuação de confiança ou label
+                    }
+                    predictions.append(prediction)
+
+                # Gerar o JSON com as predições
+                json_predictions = json.dumps({"predictions": predictions}, indent=4)
+                
+                # Aqui você pode retornar ou salvar o JSON gerado
+                output_json_path = os.path.join(self.path_out, im_name[:-4] + '.predictions.json')
+                with open(output_json_path, 'w') as json_file:
+                    json_file.write(json_predictions)
+
+                print(f"JSON de predições salvo em {output_json_path}")
+                return json_predictions
+                # Renderizar e salvar a imagem com keypoints
+                self.render_image_keypoints(cpu_image, boxes, keypoints, pred_labels, im_name, transparency, eyecontact_thresh)
+                
+                break  # Processar apenas uma imagem (não iterar sobre lotes grandes)
+
+        except Exception as e:
+            print(f"Erro ao processar a imagem {image_path}: {e}")
+            return None
+
+
+
+
+    def generate_img_w_keypoints(self, args):
+        transparency = args.transparency
+        eyecontact_thresh = args.looking_threshold
+        
+        if args.glob:
+            array_im = glob(os.path.join(args.images[0], '*'+args.glob))
+        else:
+            array_im = args.images
+        loader = self.predictor_.images(array_im)
+        start_pifpaf = time.time()
+        for i, (pred_batch, _, meta_batch) in enumerate(tqdm(loader)):
+            if self.track_time:
+                end_pifpaf = time.time()
+                self.pifpaf_time.append(end_pifpaf-start_pifpaf)
+            cpu_image = PIL.Image.open(open(meta_batch['file_name'], 'rb')).convert('RGB')
+            pifpaf_outs = {
+            'json_data': [ann.json_data() for ann in pred_batch],
+            'image': cpu_image
+            }
+            
+            im_name = os.path.basename(meta_batch['file_name'])
+            im_size = (cpu_image.size[0], cpu_image.size[1])
+            boxes, keypoints = preprocess_pifpaf(pifpaf_outs['json_data'], im_size, enlarge_boxes=False)
+            if self.mode == 'joints':
+                pred_labels = self.predict_look(boxes, keypoints, im_size)
+            else:
+                pred_labels = self.predict_look_alexnet(boxes, cpu_image)
+            if self.track_time:
+                end_process = time.time()
+                self.total_time.append(end_process - start_pifpaf)
+            
+            #break
+            if self.track_time:
+                start_pifpaf = time.time()
+            else:
+                self.render_image_keypoints(pifpaf_outs['image'], boxes, keypoints, pred_labels, im_name, transparency, eyecontact_thresh)
 
             #if i > 20:
             #    break

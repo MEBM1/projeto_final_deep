@@ -12,7 +12,8 @@ from skimage import io, transform
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 
-from utils.utils_train import *
+#from utils.utils_train import *
+from utils_train import *
 
 np.random.seed(0)
 
@@ -56,7 +57,8 @@ class JAAD_Dataset(Dataset):
         if self.type in ['heads+joints', 'eyes+joints']:
             self.X, self.kps, self.Y = self.preprocess()
         else:
-            self.X, self.Y = self.preprocess()
+            #self.X, self.Y = self.preprocess()
+            self.X, self.Y, self.age, self.gender = self.preprocess_with_ann()
 
     def __len__(self):
         return len(self.Y)
@@ -113,6 +115,8 @@ class JAAD_Dataset(Dataset):
         self.heights = []
         if self.type == 'joints':
             tab_Y = []
+            gender_list = []
+            age_list = []
             kps = []
             for line in self.txt:
                 line = line[:-1]
@@ -131,8 +135,115 @@ class JAAD_Dataset(Dataset):
                     tensor = np.concatenate((X_new, Y_new, joints[34:])).tolist()
                 kps.append(tensor)
                 tab_Y.append(int(line_s[-1]))
+                #age_list.append(int(line_s)[-3])
                 self.heights.append(height)
             return torch.tensor(kps), tab_Y
+        elif self.type == 'heads':
+            tab_X = []
+            tab_Y = []
+            for line in self.txt:
+                line = line[:-1]
+                line_s = line.split(",")
+                tab_X.append(line_s[-2])
+                tab_Y.append(int(line_s[-1]))
+                joints = np.array(json.load(open(os.path.join(self.path_data, line_s[-2]+'.json')))["X"])
+                X = joints[:17]
+                Y = joints[17:34]
+                _, _, height = normalize_by_image_(X, Y, height_=True)
+                self.heights.append(height)
+            return tab_X, tab_Y
+        elif self.type == 'eyes':
+            tab_X = []
+            tab_Y = []
+            for line in self.txt:
+                line = line[:-1]
+                line_s = line.split(",")
+                tab_X.append(line_s[-2][:-4]+'_eyes.png')
+                joints = np.array(json.load(open(os.path.join(self.path_data, line_s[-2]+'.json')))["X"])
+                X = joints[:17]
+                Y = joints[17:34]
+                _, _, height = normalize_by_image_(X, Y, height_=True)
+                tab_Y.append(int(line_s[-1]))
+                self.heights.append(height)
+            return tab_X, tab_Y
+        elif self.type == 'heads+joints' or self.type == 'eyes+joints':
+            tab_X = []
+            tab_Y = []
+            kps = []
+            for line in self.txt:
+                line = line[:-1]
+                line_s = line.split(",")
+                if self.type != 'eyes+joints':
+                    tab_X.append(line_s[-2]) # append the image / joints file name
+                else:
+                    tab_X.append(line_s[-2][:-4]+'_eyes.png')
+                joints = np.array(json.load(open(os.path.join(self.path_data, line_s[-2]+'.json')))["X"])
+                #print(joints)
+                X = joints[:17]
+                Y = joints[17:34]
+                X_new, Y_new, height = normalize_by_image_(X, Y, height_=True, type_='JAAD')
+                tensor = np.concatenate((X_new, Y_new, joints[34:])).tolist()
+                kps.append(tensor) 
+                tab_Y.append(int(line_s[-1]))
+                self.heights.append(height)
+            return tab_X, torch.tensor(kps), tab_Y
+        else:
+            tab_X = []
+            tab_Y = []
+            kps = []
+            for line in self.txt:
+                line = line[:-1]
+                line_s = line.split(",")
+                tab_X.append(line_s[-2])
+                x1, y1, x2, y2 = float(line_s[2]), float(line_s[3]), float(line_s[4]), float(line_s[5])
+                tensor = [x1/self.WIDTH, y1/self.HEIGHT, x2/self.WIDTH, y2/self.HEIGHT]
+                height = abs(y2-y1)
+                kps.append(tensor)
+                tab_Y.append(int(line_s[-1]))
+                self.heights.append(height)
+            return tab_X, torch.tensor(kps), tab_Y
+        
+
+    def preprocess_with_ann(self):
+        """
+            Utility function to get, accordingly to the dataset mode the desired instances.
+            For joints:
+                - Loads each instance and its associated ground truth, normalize them and store them in an array
+            For heads:
+                - Stores each path to the crops and its associated ground truth and store them in an array
+            For heads+joints:
+                - Loads both normalized joints and paths to each crop image and store them in a different array each
+        """
+        self.heights = []
+        if self.type == 'joints':
+            tab_Y = []
+            gender_list = []
+            age_list = []
+            kps = []
+            for line in self.txt:
+                line = line[:-1]
+                line_s = line.split(",")
+                #print('line_s', line_s)
+                #['video_0001\\00000.png', '0_1_3b', '441.0', '721.0', '533.0', '843.0', '0000000000.png', '0', '3', '1']
+                joints = np.array(json.load(open(os.path.join(self.path_data, line_s[-4]+'.json')))["X"])
+                X = joints[:17]
+                Y = joints[17:34]
+                X_new, Y_new, height = normalize_by_image_(X, Y, height_=True, type_='JAAD')
+                if self.pose == "head":
+                    X_new, Y_new, C_new = extract_head(X_new, Y_new, joints[34:])
+                    tensor = np.concatenate((X_new, Y_new, C_new)).tolist()
+                elif self.pose == 'body':
+                    X_new, Y_new, C_new = extract_body(X_new, Y_new, joints[34:])
+                    tensor = np.concatenate((X_new, Y_new, C_new)).tolist()
+                else:
+                    tensor = np.concatenate((X_new, Y_new, joints[34:])).tolist()
+                kps.append(tensor)
+                tab_Y.append(int(line_s[-3]))
+                #print('TAB_Y:', tab_Y)
+                age_list.append(int(line_s[-2]))
+                gender_list.append(int(line_s[-1]))
+                self.heights.append(height)
+            return torch.tensor(kps), tab_Y, age_list, gender_list
         elif self.type == 'heads':
             tab_X = []
             tab_Y = []
@@ -257,6 +368,7 @@ class JAAD_Dataset(Dataset):
             idx_Y1 = np.where(np.array(tab_Y) == 1)[0]
             idx_Y0 = np.where(np.array(tab_Y) == 0)[0]
             positive_samples = np.array(tab_X)[idx_Y1] # Take all the positive samples and their ground truths
+            print('positive samples: ', positive_samples)
             positive_samples_labels = np.array(tab_Y)[idx_Y1]
             N_pos = len(idx_Y1)
             aps = []
@@ -474,6 +586,326 @@ class JAAD_Dataset(Dataset):
             if heights_:
                 return np.mean(aps), np.mean(accs), np.mean(aps1), np.mean(aps2), np.mean(aps3), np.mean(aps4), np.array(distances)
             return np.mean(aps), np.mean(accs)
+
+
+    def evaluate_with_ann(self, model, device, it=1, heights_=False):
+        """
+            Evaluation script that does the same evaluation protocol as described in the paper
+            Args :
+                - model: torch model to use (looking model)
+                - device: torch device
+                - it: int, number of iterations for random sampling
+                - hegiths_: bool, enables the ablation study on the heights
+            Returns :
+                -   Computed AP and accuracies + the results of the ablation study on the distances if applicable
+        """
+        assert self.split in ["test", "val"] # check that we don't evaluate on training set 
+        model = model.to(device)
+        model.eval()
+        heights = None
+        if self.type  == 'joints':
+            tab_X, tab_Y = self.X.cpu().detach().numpy(), self.Y
+            idx_Y1 = np.where(np.array(tab_Y) == 1)[0]
+            idx_Y0 = np.where(np.array(tab_Y) == 0)[0]
+            positive_samples = np.array(tab_X)[idx_Y1] # Take all the positive samples and their ground truths
+            #print('positive samples: ', positive_samples)
+            positive_samples_labels = np.array(tab_Y)[idx_Y1]
+            N_pos = len(idx_Y1)
+            aps = []
+            accs = []
+            aps1 = []
+            aps2 = []
+            aps3 = []
+            aps4 = []
+            acs1 = []
+            acs2 = []
+            acs3 = []
+            acs4 = []
+            distances = []
+
+            # Inicializando contadores
+            correct_preds_by_gender_list = []
+            incorrect_preds_by_gender_list = []
+            correct_preds_by_age_list = []
+            incorrect_preds_by_age_list = []
+
+      #      correct_preds_by_gender = {'0': 0, '1': 0, '2':0}
+      #      incorrect_preds_by_gender = {'0': 0, '1': 0, '2':0}
+
+      #      correct_preds_by_age = {'0': 0, '1': 0, '2':0, '3':0}  
+      #      incorrect_preds_by_age = {'0': 0, '1': 0, '2':0, '3':0}
+
+            for i in range(it):
+                correct_preds_by_gender = {'0': 0, '1': 0, '2':0}
+                incorrect_preds_by_gender = {'0': 0, '1': 0, '2':0}
+
+                correct_preds_by_age = {'0': 0, '1': 0, '2':0, '3':0}  
+                incorrect_preds_by_age = {'0': 0, '1': 0, '2':0, '3':0}
+
+                np.random.seed(i)
+                np.random.shuffle(idx_Y0)
+                neg_samples = np.array(tab_X)[idx_Y0[:N_pos]]
+                neg_samples_labels = np.array(tab_Y)[idx_Y0[:N_pos]]
+                total_samples = np.concatenate((positive_samples, neg_samples)).tolist()
+                total_labels = np.concatenate((positive_samples_labels, neg_samples_labels)).tolist()
+############# inicio teste
+                # Reordenando self.gender e self.age
+                positive_genders = np.array(self.gender)[idx_Y1]
+                negative_genders = np.array(self.gender)[idx_Y0[:N_pos]]
+                total_genders = np.concatenate((positive_genders, negative_genders)).tolist()
+
+                positive_ages = np.array(self.age)[idx_Y1]
+                negative_ages = np.array(self.age)[idx_Y0[:N_pos]]
+                total_ages = np.concatenate((positive_ages, negative_ages)).tolist()
+
+###################### fim teste
+
+                if heights_:
+                    heights = np.array(self.heights)[np.concatenate((idx_Y1, idx_Y0[:N_pos]))]
+                print('len total samples', len(total_samples))
+                dataset_joints_test = Eval_Dataset_joints(total_samples, total_labels, heights)
+                ###data_loader = torch.utils.data.DataLoader(dataset_joints_test, batch_size=1, shuffle=True)
+                data_loader = torch.utils.data.DataLoader(dataset_joints_test, batch_size=1, shuffle=False)
+                acc = 0
+                predicted_labels = torch.Tensor([]).type(torch.float)
+                ground_truth_labels = torch.Tensor([])
+                if heights_:
+                    heights = []
+                with torch.no_grad():
+                    #teste
+                    batch_idx = 0
+                    print('oi')
+                    for x_test, y_test, height in data_loader:
+                        x_test, y_test = x_test.to(device), y_test.to(device)
+                        if heights_:
+                            heights.extend(height.detach().numpy().tolist())
+                    #
+                        current_gender = total_genders[batch_idx]
+                        current_age = total_ages[batch_idx]
+                        batch_idx += 1
+                    #
+                        out_pred = model(x_test)
+                        pred_label = torch.round(out_pred)
+                        #alterando pra ter o true label
+                        pred_label_scalar = torch.round(out_pred).item()
+                        #print('pred label ', pred_label_scalar)
+        
+                        true_label = y_test.item()
+
+                        if int(pred_label_scalar) == int(true_label):
+                            correct_preds_by_gender[str(current_gender)] += 1
+                            correct_preds_by_age[str(current_age)] += 1
+                        else:
+                            incorrect_preds_by_gender[str(current_gender)] += 1
+                            incorrect_preds_by_age[str(current_age)] += 1
+
+                        le = x_test.shape[0]
+                        acc += le*binary_acc(pred_label.type(torch.float), y_test.type(torch.float).view(-1)).item()
+                        ground_truth_labels = torch.cat((ground_truth_labels.detach().cpu(), y_test.type(torch.float).view(-1).detach().cpu()), dim=0)
+                        predicted_labels = torch.cat((predicted_labels.detach().cpu(), out_pred.view(-1).detach().cpu()), dim=0)
+
+
+                if heights_:
+                    out_ap, out_ac, distance = self.eval_ablation(np.array(heights), predicted_labels, ground_truth_labels)
+                    ap_1, ap_2, ap_3, ap_4 = out_ap
+                    ac_1, ac_2, ac_3, ac_4 = out_ac
+
+                    aps1.append(ap_1)
+                    aps2.append(ap_2)
+                    aps3.append(ap_3)
+                    aps4.append(ap_4)
+
+                    acs1.append(ac_1)
+                    acs2.append(ac_2)
+                    acs3.append(ac_3)
+                    acs4.append(ac_4)
+                    distances.append(distance)
+
+
+               # print("correct predictions by gender:")
+                #for gender, count in sorted(correct_preds_by_gender.items()):
+                correct_preds_by_gender_list.append(correct_preds_by_gender)
+               #     print(f"Gender {gender}: {count}")
+
+                #print("incorrect predictions by gender:")
+                #for gender, count in sorted(incorrect_preds_by_gender.items()):
+                incorrect_preds_by_gender_list.append(incorrect_preds_by_gender)
+                #    print(f"Gender {gender}: {count}")
+
+                #print("\ncorrect predictions by age:")
+                #for age, count in sorted(correct_preds_by_age.items()):
+                correct_preds_by_age_list.append(correct_preds_by_age)
+                #    print(f"Age {age}: {count}")
+
+                #print("\n incorrect predictions by age:")
+                #for age, count in sorted(incorrect_preds_by_age.items()):
+                incorrect_preds_by_age_list.append(incorrect_preds_by_age)
+                #    print(f"Age {age}: {count}")
+
+
+                acc /= len(dataset_joints_test)
+                ap = average_precision(predicted_labels, ground_truth_labels)
+                accs.append(acc)
+                aps.append(ap)
+            if heights_:
+                return np.mean(aps), np.mean(accs), np.mean(aps1), np.mean(aps2), np.mean(aps3), np.mean(aps4), np.array(distances)
+            #print('correct_preds_by_age list', correct_preds_by_age_list)
+            return np.mean(aps), np.mean(accs), correct_preds_by_age_list, incorrect_preds_by_age_list, correct_preds_by_gender_list, incorrect_preds_by_gender_list
+        elif self.type in ['heads', 'eyes']:
+            tab_X, tab_Y = self.X, self.Y
+            idx_Y1 = np.where(np.array(tab_Y) == 1)[0]
+            idx_Y0 = np.where(np.array(tab_Y) == 0)[0]
+            positive_samples = np.array(tab_X)[idx_Y1]
+            positive_samples_labels = np.array(tab_Y)[idx_Y1]
+            N_pos = len(idx_Y1)
+
+            aps = []
+            accs = []
+            aps1 = []
+            aps2 = []
+            aps3 = []
+            aps4 = []
+            acs1 = []
+            acs2 = []
+            acs3 = []
+            acs4 = []
+            distances = []
+            for i in range(it):
+                np.random.seed(i)
+                np.random.shuffle(idx_Y0)
+                neg_samples = np.array(tab_X)[idx_Y0[:N_pos]]
+                neg_samples_labels = np.array(tab_Y)[idx_Y0[:N_pos]]
+
+                total_samples = np.concatenate((positive_samples, neg_samples)).tolist()
+                total_labels = np.concatenate((positive_samples_labels, neg_samples_labels)).tolist()
+
+                dataset_test_heads = Eval_Dataset_heads(self.path_data, total_samples, total_labels, self.transform)
+                data_loader = torch.utils.data.DataLoader(dataset_test_heads, batch_size=16, shuffle=False)
+
+                
+                acc = 0
+                predicted_labels = torch.Tensor([]).type(torch.float)
+                total_ground_truth = torch.Tensor([])
+                if heights_:
+                    heights = np.array(self.heights)[np.concatenate((idx_Y1, idx_Y0[:N_pos]))]
+
+                with torch.no_grad():
+                    for x_test, y_test in data_loader:
+                        x_test, y_test = x_test.to(device), y_test.to(device)
+                        out_pred = model(x_test)
+                        pred_label = torch.round(out_pred)
+                        le = x_test.shape[0]
+                        acc += le*binary_acc(pred_label.type(torch.float).view(-1), y_test).item()
+                        total_ground_truth = torch.cat((total_ground_truth.detach().cpu(), y_test.type(torch.float).view(-1).detach().cpu()), dim=0)
+                        predicted_labels = torch.cat((predicted_labels.detach().cpu(), out_pred.view(-1).detach().cpu()), dim=0)
+                acc /= len(dataset_test_heads)
+                ap = average_precision(predicted_labels, total_ground_truth)
+                accs.append(acc)
+                aps.append(ap)
+                if heights_:
+                    out_ap, out_ac, distance = self.eval_ablation(heights, predicted_labels, total_ground_truth)
+                    ap_1, ap_2, ap_3, ap_4 = out_ap
+                    ac_1, ac_2, ac_3, ac_4 = out_ac
+
+                    aps1.append(ap_1)
+                    aps2.append(ap_2)
+                    aps3.append(ap_3)
+                    aps4.append(ap_4)
+
+                    acs1.append(ac_1)
+                    acs2.append(ac_2)
+                    acs3.append(ac_3)
+                    acs4.append(ac_4)
+                    distances.append(distance)
+                #break
+            if heights_:
+                return np.mean(aps), np.mean(accs), np.mean(aps1), np.mean(aps2), np.mean(aps3), np.mean(aps4), np.array(distances)
+            return np.mean(aps), np.mean(accs)
+        else:
+            model.eval()
+            model = model.to(device)
+            tab_X, tab_Y, kps = self.X, self.Y, self.kps.cpu().detach().numpy()
+            idx_Y1 = np.where(np.array(tab_Y) == 1)[0]
+            idx_Y0 = np.where(np.array(tab_Y) == 0)[0]
+            positive_samples = np.array(tab_X)[idx_Y1]
+            positive_samples_kps = np.array(kps)[idx_Y1]
+            positive_samples_labels = np.array(tab_Y)[idx_Y1]
+            N_pos = len(idx_Y1)
+            aps = []
+            accs = []
+            aps1 = []
+            aps2 = []
+            aps3 = []
+            aps4 = []
+            acs1 = []
+            acs2 = []
+            acs3 = []
+            acs4 = []
+            distances = []
+            
+            for i in range(it):
+                np.random.seed(i)
+                np.random.shuffle(idx_Y0)
+            
+                neg_samples = np.array(tab_X)[idx_Y0[:N_pos]]
+                neg_samples_kps = np.array(kps)[idx_Y0[:N_pos]]
+                neg_samples_labels = np.array(tab_Y)[idx_Y0[:N_pos]]
+
+                total_samples = np.concatenate((positive_samples, neg_samples)).tolist()
+                total_samples_kps = np.concatenate((positive_samples_kps, neg_samples_kps)).tolist()
+                total_labels = np.concatenate((positive_samples_labels, neg_samples_labels)).tolist()
+                
+                if heights_:
+                    heights = np.array(self.heights)[np.concatenate((idx_Y1, idx_Y0[:N_pos]))]
+
+                dataset_test_heads_joints = Eval_Dataset_heads_joints(self.path_data, total_samples, total_labels, total_samples_kps, self.transform, heights)
+                data_loader = torch.utils.data.DataLoader(dataset_test_heads_joints, batch_size=16, shuffle=False)
+                
+                acc = 0
+                predicted_labels = torch.Tensor([]).type(torch.float)
+                total_ground_truth = torch.Tensor([])
+
+                if heights_:
+                    heights = []
+                
+
+                with torch.no_grad():
+                    for x_test, kps_test, y_test, height in data_loader:
+                        x_test, kps_test, y_test = x_test.to(device), kps_test.to(device), y_test.to(device)
+                        if heights_:
+                            heights.extend(height.detach().numpy().tolist())
+                        output = model((x_test, kps_test))
+                        out_pred = output
+                        pred_label = torch.round(out_pred)
+                        le = x_test.shape[0]
+                        acc += le*binary_acc(pred_label.type(torch.float).view(-1), y_test).item()
+                        total_ground_truth = torch.cat((total_ground_truth.detach().cpu(), y_test.type(torch.float).view(-1).detach().cpu()), dim=0)
+                        predicted_labels = torch.cat((predicted_labels.detach().cpu(), out_pred.view(-1).detach().cpu()), dim=0)
+
+                acc /= len(dataset_test_heads_joints)     
+                ap = average_precision(predicted_labels, total_ground_truth)
+                accs.append(acc)
+                aps.append(ap)
+                if heights_:
+                    out_ap, out_ac, distance = self.eval_ablation(np.array(heights), predicted_labels, total_ground_truth)
+                    ap_1, ap_2, ap_3, ap_4 = out_ap
+                    ac_1, ac_2, ac_3, ac_4 = out_ac
+
+                    aps1.append(ap_1)
+                    aps2.append(ap_2)
+                    aps3.append(ap_3)
+                    aps4.append(ap_4)
+
+                    acs1.append(ac_1)
+                    acs2.append(ac_2)
+                    acs3.append(ac_3)
+                    acs4.append(ac_4)
+                    distances.append(distance)
+            if heights_:
+                return np.mean(aps), np.mean(accs), np.mean(aps1), np.mean(aps2), np.mean(aps3), np.mean(aps4), np.array(distances)
+            return np.mean(aps), np.mean(accs)
+
+
 
 class PIE_Dataset(Dataset):
     """

@@ -1,6 +1,7 @@
 import configparser
 import os, errno
 import copy
+import pandas as pd
 
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -327,14 +328,47 @@ class Evaluator():
         self.height_ = self.parser.eval_params.getboolean('height')
         print('heights: ', self.height_)
 
+
+
+    def process_prediction_data(self, correct_list, incorrect_list, iterations, category_label):
+        rows = []
+        for i, (correct, incorrect) in enumerate(zip(correct_list, incorrect_list)):
+            for group in correct.keys():  # '0', '1', ...
+                rows.append({
+                    'Iteration': iterations[i],
+                    'Category': category_label,  # "Age" ou "Gender"
+                    'Group': group,  # Grupo específico ('0', '1', etc.)
+                    'Correct Predictions': correct[group],
+                    'Incorrect Predictions': incorrect[group]
+                })
+        return rows
+
+    def ann_analysis_to_df(self, correct_preds_by_age_list, incorrect_preds_by_age_list, correct_preds_by_gender_list, incorrect_preds_by_gender_list):
+        iterations = list(range(len(correct_preds_by_age_list)))
+        age_data = self.process_prediction_data(correct_preds_by_age_list, incorrect_preds_by_age_list, iterations, "Age")
+        gender_data = self.process_prediction_data(correct_preds_by_gender_list, incorrect_preds_by_gender_list, iterations, "Gender")
+
+        # Criar DataFrame consolidado
+        all_data = age_data + gender_data
+        df = pd.DataFrame(all_data)
+        return df
+
+
     def evaluate(self):
         """
             Loop over the test set and evaluate the performance of the model on it
         """
         data_to_evaluate = self.parser.eval_params['eval_on']
         data_test = self.parser.get_data_test(data_to_evaluate)
+
+        #print('genderrrr', data_test.gender)
         if self.height_==False:
             ap, acc = data_test.evaluate(self.parser.model, self.parser.device, 10)
+            #ap, acc, correct_preds_by_age_list, incorrect_preds_by_age_list, correct_preds_by_gender_list, incorrect_preds_by_gender_list = data_test.evaluate_with_ann(self.parser.model, self.parser.device, 10)
+
+            #df_ann_analysys = self.ann_analysis_to_df(correct_preds_by_age_list, incorrect_preds_by_age_list, correct_preds_by_gender_list, incorrect_preds_by_gender_list)
+            #print(df_ann_analysys)
+            #df_ann_analysys.to_csv('df_ann_analysys.csv', index=False)
             print('Evaluation on {} | acc:{:.1f} | ap:{:.1f}'.format(data_to_evaluate, acc, ap*100))
         else:
             ap, acc, ap_1, ap_2, ap_3, ap_4, distances = data_test.evaluate(self.parser.model, self.parser.device, 10, True)
@@ -343,6 +377,54 @@ class Evaluator():
             print('Ap Far : {:.1f} | Middle 1 : {:.1f} | Middle_2 : {:.1f} | Close :{:.1f}'.format(ap_1*100, ap_2*100, ap_3*100, ap_4*100))
             #print('Ac Far : {:.1f} | Middle 1 : {:.1f} | Middle_2 : {:.1f} | Close :{:.1f}'.format(ac_1*100, ac_2*100, ac_3*100, ac_4*100))
             print('Evaluation on {} | acc:{:.1f} | ap:{:.1f}'.format(data_to_evaluate, acc, ap*100))
+
+
+
+    def evaluate_with_ann(self):
+
+        """
+            Loop over the test set and evaluate the performance of the model on it.
+            Logs detailed results for each example.
+        """
+        import pandas as pd  # Para armazenar os resultados em tabela
+
+        # Dados de avaliação
+        data_to_evaluate = self.parser.eval_params['eval_on']
+        data_test = self.parser.get_data_test(data_to_evaluate)
+        
+        results = []  # Lista para armazenar resultados detalhados
+
+        # Avaliação do modelo
+        if not self.height_:
+            ap, acc, preds, labels, metadata = data_test.evaluate(self.parser.model, self.parser.device, 10, return_detailed=True)
+            print('Evaluation on {} | acc:{:.1f} | ap:{:.1f}'.format(data_to_evaluate, acc, ap * 100))
+        else:
+            ap, acc, preds, labels, metadata, distances = data_test.evaluate(
+                self.parser.model, self.parser.device, 10, return_detailed=True, include_distances=True
+            )
+            print('Distances : ', np.mean(distances, axis=0))
+            print('Evaluation on {} | acc:{:.1f} | ap:{:.1f}'.format(data_to_evaluate, acc, ap * 100))
+
+        # Analisando resultados
+        for pred, label, meta in zip(preds, labels, metadata):
+            path, age, gender = meta['path'], meta['age'], meta['gender']
+            is_correct = int(pred == label)
+            results.append({
+                'Image Path': path,
+                'True Label': label,
+                'Predicted Label': pred,
+                'Correct': is_correct,
+                'Age': age,
+                'Gender': gender,
+            })
+        
+        # Criar um DataFrame para análise
+        results_df = pd.DataFrame(results)
+        print(results_df.head(10))  # Exibe as primeiras linhas no console para verificação inicial
+        
+        # Salvar os resultados em um arquivo CSV
+        results_df.to_csv('evaluation_results.csv', index=False)
+        print("Resultados detalhados salvos em 'evaluation_results.csv'")
 
 class Trainer():
     """
@@ -375,6 +457,12 @@ class Trainer():
             else:
                 train_loader = DataLoader(concat_dataset, batch_size=self.parser.batch_size, shuffle=True)
         else:
+        ## TESTE DATA AUGMENTATION
+
+
+
+
+        #######################    
             train_loader = DataLoader(self.parser.dataset_train, batch_size=self.parser.batch_size, shuffle=True)
         running_loss = 0
         i = 0

@@ -17,4 +17,5 @@ parser = Parser(config)
 parser.parse()
 
 evaluator = Evaluator(parser)
+#evaluator.evaluate()
 evaluator.evaluate()
