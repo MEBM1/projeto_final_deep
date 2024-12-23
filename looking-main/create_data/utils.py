@@ -242,14 +242,28 @@ class JAAD_loader():
 						data["video"].append(videos)
 		return data
 	
-	def augment_selected_samples(self,data_dict, percentage=0.3):
+	def augment_selected_samples(self,data_dict, percentage=0.20):
 		# Define as transformações (zoom-in e ajuste de brilho)
 		print(f"Tipo de data_dict: {type(data_dict)}")  # Deve ser <class 'dict'>
 		print(f"Chaves de data_dict: {data_dict.keys()}")  # Esperado: ['path', 'bbox', 'names', 'Y', 'video', 'attributes', 'image']
     
+		#augmentation_transforms = transforms.Compose([
+		#	transforms.RandomResizedCrop(size=(224, 224), scale=(0.8, 1.0)),  # Zoom-in
+		#	transforms.ColorJitter(brightness=0.5)  # Ajuste de brilho
+		#])
+		#augmentation_transforms = transforms.Compose([
+    		#transforms.RandomResizedCrop(size=(224, 224), scale=(0.9, 1.0), ratio=(0.95, 1.05)),  # Menor zoom
+    		#transforms.ColorJitter(brightness=0.2, contrast=0.2),  # Pequena variação de brilho/contraste
+    		#transforms.RandomRotation(degrees=5),  # Rotação controlada
+    		#transforms.RandomHorizontalFlip(p=0.5)  # Flip horizontal
+			#])
 		augmentation_transforms = transforms.Compose([
-			transforms.RandomResizedCrop(size=(224, 224), scale=(0.8, 1.0)),  # Zoom-in
-			transforms.ColorJitter(brightness=0.5)  # Ajuste de brilho
+			#transforms.ColorJitter(brightness=0.2, contrast=0.2)
+			transforms.ColorJitter(brightness=(0.5, 0.6), contrast=(0.7, 0.8))
+			#transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.2, hue=0.1)
+    		#transforms.RandomResizedCrop(size=(224, 224), scale=(0.95, 1.0), ratio=(0.98, 1.02)),  # Crop sutil
+			#transforms.RandomRotation(degrees=10)
+    		#transforms.RandomAffine(degrees=3, translate=(0.02, 0.02), scale=(0.98, 1.02))  # Leve distor
 		])
 		print(f"Tipo de data_dict: {type(data_dict)}")  # Deve ser <class 'dict'>
 		print(f"Chaves de data_dict: {data_dict.keys()}")  # Esperado: ['path', 'bbox', 'names', 'Y', 'video', 'attributes', 'image']
@@ -269,7 +283,8 @@ class JAAD_loader():
 		# Aplica as transformações somente nas amostras selecionadas
 		for i in indices_to_augment:
 			original_image_path = data_dict['path'][i]  # Caminho da imagem
-			
+			print('caminho da imagem original', original_image_path)
+			#print('path', original_image_path)
 			# Carrega a imagem e aplica a transformação
 			with Image.open(original_image_path) as img:
 				augmented_image = augmentation_transforms(img)  # Aplica a transformação
@@ -278,6 +293,7 @@ class JAAD_loader():
 			augmented_image_path = original_image_path.replace('.png', '_augmented.png')  # Exemplo de novo nome para a imagem aumentada
 			augmented_image.save(augmented_image_path)
 
+			print('caminho da imagem aumentada', augmented_image_path)
 			# Adiciona o novo caminho e dados ao dicionário
 			new_paths.append(augmented_image_path)  # Caminho da imagem aumentada
 			new_bboxes.append(data_dict['bbox'][i])
@@ -455,23 +471,31 @@ class JAAD_creator():
 		"""
 		Modificado para processar imagens com 'augmented' de forma personalizada.
 		"""
-		file_out = open(os.path.join(self.txt_out, "ground_truth_teste.txt"), "w+")
-		#name_pic = 0
+
+		#file_out = open(os.path.join(self.txt_out, "ground_truth_teste.txt"), "w+")
+		name_pic = 0
+		count = 0
 		for i in tqdm(range(len(dict_annotation["Y"]))):
 			path = dict_annotation["path"][i]
 			#path = path.replace('_augmented.png', '.png')  # Ajusta o nome se necessário
-
+			#print('bounding box gt', dict_annotation["bbox"][i])
+			
 			# Se o nome da imagem contiver 'augmented', chama a nova função
 			if 'augmented' in path:
+				print(path)
 				new_path = self.get_last_x_characters(path, 30)
 				augmented_json = None
 				augmented_json = predictor.process_augmented_image(
 					os.path.join(self.path_jaad, new_path),
 					transparency=0.5,  # Ajuste os argumentos conforme necessário
-					eyecontact_thresh=0.3
+					eyecontact_thresh=0.3,
+					bb_gt = dict_annotation["bbox"][i]
 				)
-				#continue  # Pula para a próxima iteração
+				print('novo caminho create',new_path)
+				#continue  # Pula para a próxima iteraçãor
 			else:
+				#pular e só ver as aumentadas. TESTE!!!!!!
+				continue
 				new_path = self.get_last_x_characters(path, 20)
 			try:
 				if 'augmented' not in path:
@@ -483,29 +507,51 @@ class JAAD_creator():
 				continue
 
 			#data_json = json.load(open(os.path.join(self.path_joints, new_path + '.predictions.json'), 'r'))
+			if data_json is None:
+				continue
 			if len(data_json) > 0:
 				iou_max = 0
 				j = None
 				bb_gt = dict_annotation["bbox"][i]
 				sc = 0
 				for k in range(len(data_json)):
+				#	print(f"data_json[k]: {data_json[k]} (type: {type(data_json[k])})")
 					di = data_json[k]
+					    # Tenta carregar `di` como JSON, se necessário
+						#teste
+					if isinstance(di, str):
+						try:
+							di = json.loads(di)
+						except json.JSONDecodeError as e:
+							print(f"Erro ao decodificar JSON no item {k}: {di}, erro: {e}")
+							continue
+
+					## fim do teste
 					bb = convert_bb(enlarge_bbox(di["bbox"]))
 					iou = bb_intersection_over_union(bb, bb_gt)
+
+					print('bbgt', bb_gt)
+					print('BB', bb)
+					print('IOU', iou)
 					if iou > iou_max:
 						iou_max = iou
 						j = k
 						bb_final = bb
 						sc = di["score"]
 				
-				if iou_max >= 0.3:
+				#if iou_max >= 0.3:
+				#testar com valor menor
+				
+				if iou_max >= 0.1:
+					
 					print('entrei iou max')
 					kps = convert_kps(data_json[j]["keypoints"])
-					name_head = str(name_pic).zfill(10) + '.png'
-					name_eyes = str(name_pic).zfill(10) + '_eyes.png'
+					name_head = str(name_pic).zfill(10) + '_augmented.png'
+					name_eyes = str(name_pic).zfill(10) + '_augmented_eyes.png'
 
 					#img = Image.open(os.path.join(self.path_jaad, path)).convert('RGB')
 					img = Image.open(os.path.join(self.path_jaad, new_path)).convert('RGB')
+					print('caminho da imagem salva', os.path.join(self.path_jaad, new_path))
 					img = np.asarray(img)
 					head = crop_jaad(img, bb_final)
 					eyes = crop_eyes(img, kps)
@@ -513,7 +559,9 @@ class JAAD_creator():
 					Image.fromarray(head).convert('RGB').save(os.path.join(self.dir_out, name_head))
 					Image.fromarray(eyes).convert('RGB').save(os.path.join(self.dir_out, name_eyes))
 					kps_out = {"X": kps}
+					### teste com augmented"
 					
+					#json.dump(kps_out, open(os.path.join(self.dir_out, name_head + '.json'), "w"))
 					json.dump(kps_out, open(os.path.join(self.dir_out, name_head + '.json'), "w"))
 					
 					# Extrair os atributos do pedestre atual
@@ -534,8 +582,19 @@ class JAAD_creator():
 					#)
 					
 					name_pic += 1
-					file_out.write(line)
-		file_out.close()
+					if count == 0:
+						file_out = open(os.path.join(self.txt_out, "ground_truth_teste.txt"), "w+")
+						file_out.write(line)
+						file_out.close()
+					else:
+						file_out = open(os.path.join(self.txt_out, "ground_truth_teste.txt"), "a+")
+						file_out.write(line)
+						file_out.close()
+					count = count+1
+
+					#file_out.write(line)
+					print('escrevi')
+		#file_out.close()
 
 	def create_with_ann(self, dict_annotation):
 		"""

@@ -9,6 +9,8 @@ sys.path.insert(0,r'C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Fina
 from predictor import Predictor
 #### teste
 
+from predictor import *
+
 parser = argparse.ArgumentParser(prog='python3 predict', usage='%(prog)s [options] images', description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 parser.add_argument('--version', action='version',version='Looking Model {version}'.format(version=0.1))
 parser.add_argument('--images', nargs='*',help='input images')
@@ -29,6 +31,12 @@ parser.add_argument('--loader-workers', default=None, type=int, help='number of 
 parser.add_argument('--precise-rescaling', dest='fast_rescaling', default=True, action='store_false', help='use more exact image rescaling (requires scipy)')
 parser.add_argument('--checkpoint_', default='shufflenetv2k30', type=str, help='backbone model to use')
 parser.add_argument('--disable-cuda', action='store_true', help='disable CUDA')
+
+decoder.cli(parser)
+logger.cli(parser)
+network.Factory.cli(parser)
+show.cli(parser)
+visualizer.cli(parser)
 
 args = parser.parse_args()
 
@@ -58,7 +66,7 @@ if 'Augmentation_JAAD' in data:
     #print(int(len(data_dict['path']) * 0.3))
     #print('data dict path',data_dict['path'])
     data_aux = data_dict
-    augmented_data = jaad_loader.augment_selected_samples(data_aux)#, percentage=0.3)
+    augmented_data = jaad_loader.augment_selected_samples(data_aux)
     #print('augmented dataaaa', augmented_data)
     jaad_creator = JAAD_creator(txt_out, dir_out, path_joints, r"C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Final\JAAD\images")
     jaad_creator.create_with_ann_augmented(augmented_data, predictor)

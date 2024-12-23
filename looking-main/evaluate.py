@@ -18,4 +18,4 @@ parser.parse()
 
 evaluator = Evaluator(parser)
 #evaluator.evaluate()
-evaluator.evaluate()
+evaluator.evaluate_with_ann()

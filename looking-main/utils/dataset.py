@@ -3,6 +3,7 @@ import os
 import json
 import torch
 import cv2
+import sys
 
 import numpy as np
 from glob import glob
@@ -13,6 +14,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 
 #from utils.utils_train import *
+sys.path.insert(0,r'C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Final\looking-main\utils')
 from utils_train import *
 
 np.random.seed(0)
@@ -225,6 +227,9 @@ class JAAD_Dataset(Dataset):
                 line_s = line.split(",")
                 #print('line_s', line_s)
                 #['video_0001\\00000.png', '0_1_3b', '441.0', '721.0', '533.0', '843.0', '0000000000.png', '0', '3', '1']
+               # print(f"line_s: {line_s}")
+                #print(f"line_s length: {len(line_s)}")
+
                 joints = np.array(json.load(open(os.path.join(self.path_data, line_s[-4]+'.json')))["X"])
                 X = joints[:17]
                 Y = joints[17:34]

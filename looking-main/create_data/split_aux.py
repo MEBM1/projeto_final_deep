@@ -3,7 +3,7 @@ import os
 
 # Defina diretamente os caminhos aqui
 data = "JAAD"
-gt_file = r"C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Final\JAAD\images\ground_truth_teste.txt"
+gt_file = r"C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Final\JAAD\images\ground_truth_teste_augmented.txt"
 txt_out = r"C:\Users\madua\Documents\Mestrado\Deep Learning\Projeto Final\output_txt_with_ann"
 
 # Execução do código com os caminhos definidos diretamente

@@ -396,7 +396,8 @@ class Evaluator():
 
         # Avaliação do modelo
         if not self.height_:
-            ap, acc, preds, labels, metadata = data_test.evaluate(self.parser.model, self.parser.device, 10, return_detailed=True)
+           # ap, acc, preds, labels, metadata = data_test.evaluate_with_ann(self.parser.model, self.parser.device)#, 10)#, return_detailed=True)
+            ap, acc, correct_preds_by_age_list, incorrect_preds_by_age_list, correct_preds_by_gender_list, incorrect_preds_by_gender_list = data_test.evaluate_with_ann(self.parser.model, self.parser.device,10)#, 10)#, return_detailed=True)
             print('Evaluation on {} | acc:{:.1f} | ap:{:.1f}'.format(data_to_evaluate, acc, ap * 100))
         else:
             ap, acc, preds, labels, metadata, distances = data_test.evaluate(
@@ -406,25 +407,67 @@ class Evaluator():
             print('Evaluation on {} | acc:{:.1f} | ap:{:.1f}'.format(data_to_evaluate, acc, ap * 100))
 
         # Analisando resultados
-        for pred, label, meta in zip(preds, labels, metadata):
-            path, age, gender = meta['path'], meta['age'], meta['gender']
-            is_correct = int(pred == label)
-            results.append({
-                'Image Path': path,
-                'True Label': label,
-                'Predicted Label': pred,
-                'Correct': is_correct,
-                'Age': age,
-                'Gender': gender,
-            })
+
+
+                # Listas para armazenar os resultados
+        results = []
+
+        # Iteração para idade (Age)
+        for iteration, (correct_dict, incorrect_dict) in enumerate(zip(correct_preds_by_age_list, incorrect_preds_by_age_list)):
+            for age, correct_count in correct_dict.items():
+                incorrect_count = incorrect_dict.get(age, 0)  # Obtém o valor correspondente ou 0 se não existir
+                results.append({
+                    'Iteration': iteration,
+                    'Category': 'Age',
+                    'Group': age,
+                    'Correct Predictions': correct_count,
+                    'Incorrect Predictions': incorrect_count,
+                })
+
+        # Iteração para gênero (Gender)
+        for iteration, (correct_dict, incorrect_dict) in enumerate(zip(correct_preds_by_gender_list, incorrect_preds_by_gender_list)):
+            for gender, correct_count in correct_dict.items():
+                incorrect_count = incorrect_dict.get(gender, 0)  # Obtém o valor correspondente ou 0 se não existir
+                results.append({
+                    'Iteration': iteration,
+                    'Category': 'Gender',
+                    'Group': gender,
+                    'Correct Predictions': correct_count,
+                    'Incorrect Predictions': incorrect_count,
+                })
+
+        # Criando o DataFrame
+        import pandas as pd
+
+        df_results = pd.DataFrame(results)
+
+        # Exibindo o DataFrame
+        print(df_results)
+
+        # Salvar em CSV (opcional)
+       # df_results.to_csv('predictions_summary.csv', index=False)
+                        
+
+
+      #  for pred, label, meta in zip(preds, labels, metadata):
+      #      path, age, gender = meta['path'], meta['age'], meta['gender']
+      #      is_correct = int(pred == label)
+      #      results.append({
+      #          'Image Path': path,
+      #          'True Label': label,
+      #          'Predicted Label': pred,
+      #          'Correct': is_correct,
+      #          'Age': age,
+      #          'Gender': gender,
+      #      })
         
         # Criar um DataFrame para análise
-        results_df = pd.DataFrame(results)
-        print(results_df.head(10))  # Exibe as primeiras linhas no console para verificação inicial
+        #results_df = pd.DataFrame(results)
+        #print(results_df.head(10))  # Exibe as primeiras linhas no console para verificação inicial
         
         # Salvar os resultados em um arquivo CSV
-        results_df.to_csv('evaluation_results.csv', index=False)
-        print("Resultados detalhados salvos em 'evaluation_results.csv'")
+        df_results.to_csv('evaluation_results_normal_reduced.csv', index=False)
+        print("Resultados detalhados salvos em 'evaluation_results_augmented.csv'")
 
 class Trainer():
     """
